@@ -1,115 +1,216 @@
-"""Dataset de modelado: horas completas por estación y separación train/validation/test."""
+"""Etapa de datos de la Fase 2: ejecución de la Fase 1, demanda diaria, caché e integración."""
 
-import hashlib
-from collections import Counter
-from contextlib import ExitStack
+import json
+import logging
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import pyarrow as pa
 import pyarrow.parquet as pq
 
-from mibici_mlops.config import COMPLETE_SCHEMA, SPLIT_PERIODS
+from mibici_mlops.config import (
+    ALLOW_UNVERIFIED_CACHE,
+    CONTRACT_DTYPES,
+    DAILY_PATH,
+    DATA_END,
+    DATA_START,
+    EXPECTED_MONTHS,
+    INTEGRATED_PATH,
+    POI_CATEGORIES,
+    POI_COLUMNS,
+    POI_PATH,
+    POI_RADIUS_METERS,
+    PROCESSED_DATA_DIR,
+    STATIONS_PATH,
+    STATION_ZONES_PATH,
+    VALIDATION_REPORTS_DIR,
+    WEATHER_COLUMNS,
+    WEATHER_GRID_DEGREES,
+    WEATHER_PATH,
+)
+from mibici_mlops.checks import check_integration, check_poi_counts, validate_contract
+from mibici_mlops.external import load_or_build_poi_counts, load_or_download_weather
+from mibici_mlops.tracking import calculate_sha256
+
+logger = logging.getLogger("mibici_mlops")
 
 
-def fill_station_hours(station_id: int, station: pd.DataFrame) -> pa.Table:
-    """Completar con ceros las horas de una estación entre su primer y último viaje."""
-    hours = pd.date_range(station['Hora'].min(), station['Hora'].max(), freq='h')
-    values = station.set_index('Hora')['Cantidad_viajes'].reindex(hours, fill_value=0)
-    return pa.Table.from_pydict({
-        'Origen_Id': np.full(len(hours), station_id, dtype=np.int32),
-        'Hora': hours.to_numpy(),
-        'Cantidad_viajes': values.to_numpy(dtype=np.int32),
-    }, schema=COMPLETE_SCHEMA)
+def find_latest_valid_run(validation_dir: Path, expected_files: int) -> Path | None:
+    # Devolver la ejecución completa más reciente de la Fase 1.
+    candidates = []
+    for hourly_path in validation_dir.rglob("hourly_demand.parquet"):
+        manifest_path = hourly_path.parent / "manifest.json"
+        if not manifest_path.is_file() or hourly_path.stat().st_size == 0:
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (
+            manifest.get("files_processed") == expected_files
+            and manifest.get("full_period") is True
+            and manifest.get("finished_utc")
+        ):
+            candidates.append((manifest["finished_utc"], hourly_path.parent))
+    if not candidates:
+        return None
+    return max(candidates)[1]
 
 
-def complete_station_hours(observed_path: Path, complete_path: Path) -> None:
-    """Escribir la tabla completa procesando una estación a la vez."""
-    pending = pd.DataFrame()
-    with pq.ParquetWriter(complete_path, COMPLETE_SCHEMA, compression='zstd') as writer:
-        for batch in pq.ParquetFile(observed_path).iter_batches(batch_size=100_000):
-            block = pd.concat([pending, batch.to_pandas()], ignore_index=True)
-            # La última estación del lote puede continuar en el siguiente
-            if block.empty:
-                continue
-            last_station = block['Origen_Id'].iloc[-1]
-            ready = block.loc[block['Origen_Id'] != last_station]
-            pending = block.loc[block['Origen_Id'] == last_station]
-            for station_id, station in ready.groupby('Origen_Id', sort=True):
-                writer.write_table(fill_station_hours(station_id, station))
-        if not pending.empty:
-            writer.write_table(fill_station_hours(int(pending['Origen_Id'].iloc[0]), pending))
+def check_processed_run(run_dir: Path, expected_months: pd.PeriodIndex) -> pd.Series:
+    # Validar que la ejecución sea consistente antes de reutilizarla.
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    kept_rows = manifest["rows"]["kept_rows"]
+    hourly = pq.read_table(run_dir / "hourly_demand.parquet", columns=["Cantidad_viajes"])
+    hourly_total = int(hourly.column("Cantidad_viajes").to_numpy().sum())
+
+    expected = {f"datos_abiertos_{m.year}_{m.month:02d}.parquet" for m in expected_months}
+    trip_files = sorted((run_dir / "trips").glob("*.parquet"))
+    found = {path.name for path in trip_files if path.stat().st_size > 0}
+
+    parquet_rows, unreadable = 0, []
+    for path in trip_files:
+        try:
+            parquet_rows += pq.ParquetFile(path).metadata.num_rows
+        except (OSError, ValueError):
+            unreadable.append(path.name)
+
+    return pd.Series({
+        "Demanda horaria = viajes conservados": hourly_total == kept_rows,
+        "Cobertura mensual completa": found == expected,
+        "Parquet legibles": not unreadable,
+        "Filas de Parquet = viajes conservados": parquet_rows == kept_rows,
+    })
 
 
-def check_sorted_keys(data: pd.DataFrame, previous: tuple | None) -> None:
-    """Comprobar que las claves (Origen_Id, Hora) estén ordenadas y no se repitan."""
-    stations = data['Origen_Id'].to_numpy(dtype=np.int64)
-    hours = data['Hora'].to_numpy()
-    if previous is not None:
-        # Incluir la última clave del bloque anterior para revisar la unión entre bloques
-        stations = np.r_[previous[0], stations]
-        hours = np.r_[np.datetime64(previous[1], 'ns'), hours]
-    station_step = np.diff(stations)
-    hour_step = np.diff(hours)
-    ordered = (station_step > 0) | ((station_step == 0) & (hour_step > np.timedelta64(0, 'ns')))
-    if not ordered.all():
-        raise ValueError('Hay claves (Origen_Id, Hora) repetidas o fuera de orden')
+def cache_manifest_path(path: Path) -> Path:
+    return path.with_suffix(".manifest.json")
 
 
-def file_sha256(path: Path) -> str:
-    """Calcular el SHA-256 de un archivo para identificar la versión del dataset."""
-    digest = hashlib.sha256()
-    with open(path, 'rb') as file:
-        for block in iter(lambda: file.read(1 << 20), b''):
-            digest.update(block)
-    return digest.hexdigest()
+def build_cache_signature(run_dir: Path) -> dict:
+    # Identificar las entradas y reglas que determinan el dataset integrado.
+    inputs = {
+        "hourly_demand": run_dir / "hourly_demand.parquet",
+        "station_catalog": STATIONS_PATH,
+        "weather": WEATHER_PATH,
+        "station_zones": STATION_ZONES_PATH,
+        "poi": POI_PATH,
+    }
+    return {
+        "schema_version": 1,
+        "study_start": str(DATA_START.date()),
+        "study_end": str(DATA_END.date()),
+        "weather_grid_degrees": WEATHER_GRID_DEGREES,
+        "poi_radius_meters": POI_RADIUS_METERS,
+        "poi_categories": POI_CATEGORIES,
+        "contract_dtypes": CONTRACT_DTYPES,
+        "sources": {
+            name: {"sha256": calculate_sha256(path), "size": path.stat().st_size}
+            for name, path in inputs.items()
+        },
+    }
 
 
-def split_dataset(complete_path: Path, output_dir: Path, total_trips: int,
-                  run_all_files: bool) -> pd.DataFrame:
-    """Separar la demanda estación-hora por fecha y escribir un Parquet por conjunto."""
-    output_dir.mkdir()
-    rows, trips = Counter(), Counter()
-    first_hour, last_hour = {}, {}
-    previous = None
-    with ExitStack() as stack:
-        writers = {
-            name: stack.enter_context(pq.ParquetWriter(
-                output_dir / f'{name}.parquet', COMPLETE_SCHEMA, compression='zstd'))
-            for name in SPLIT_PERIODS
-        }
-        for batch in pq.ParquetFile(complete_path).iter_batches(batch_size=100_000):
-            data = batch.to_pandas()
-            check_sorted_keys(data, previous)
-            previous = (data['Origen_Id'].iloc[-1], data['Hora'].iloc[-1])
-            for name, (start, end) in SPLIT_PERIODS.items():
-                selected = data.loc[data['Hora'].ge(start) & data['Hora'].lt(end)]
-                if selected.empty:
-                    continue
-                writers[name].write_table(
-                    pa.Table.from_pandas(selected, schema=COMPLETE_SCHEMA, preserve_index=False))
-                rows[name] += len(selected)
-                trips[name] += int(selected['Cantidad_viajes'].sum())
-                first_hour[name] = min(first_hour.get(name, selected['Hora'].min()), selected['Hora'].min())
-                last_hour[name] = max(last_hour.get(name, selected['Hora'].max()), selected['Hora'].max())
+def cache_is_current(path: Path, signature: dict) -> bool:
+    manifest_path = cache_manifest_path(path)
+    if not path.is_file() or not manifest_path.is_file():
+        return False
+    try:
+        saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return saved.get("signature") == signature and saved.get("sha256") == calculate_sha256(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
 
-    # Validar la separación antes de usar los conjuntos
-    if sum(rows.values()) != pq.ParquetFile(complete_path).metadata.num_rows:
-        raise ValueError('Hay filas fuera de los periodos de train, validation y test')
-    if sum(trips.values()) != total_trips:
-        raise ValueError('Los viajes de los conjuntos no coinciden con los viajes conservados')
-    empty = [name for name in SPLIT_PERIODS if rows[name] == 0]
-    if run_all_files and empty:
-        raise ValueError(f'Conjuntos sin registros: {empty}')
 
-    splits = pd.DataFrame([{
-        'Conjunto': name, 'Inicio': start.date(), 'Fin_exclusivo': end.date(),
-        'Filas': rows[name], 'Viajes': trips[name],
-        'Primera_hora': first_hour.get(name), 'Ultima_hora': last_hour.get(name),
-        'Archivo': str(output_dir / f'{name}.parquet'),
-        'SHA256': file_sha256(output_dir / f'{name}.parquet'),
-    } for name, (start, end) in SPLIT_PERIODS.items()]).set_index('Conjunto')
-    splits.to_csv(output_dir / 'split_summary.csv')
-    print(splits[['Inicio', 'Fin_exclusivo', 'Filas', 'Viajes', 'Primera_hora', 'Ultima_hora']].to_string())
-    return splits
+def save_cache_manifest(path: Path, signature: dict) -> None:
+    manifest = {"signature": signature, "sha256": calculate_sha256(path)}
+    cache_manifest_path(path).write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def build_daily_demand(hourly_data: pd.DataFrame) -> pd.DataFrame:
+    # Pasar de viajes por estación y hora a viajes por estación y día.
+    daily = hourly_data.copy()
+    daily["Fecha"] = daily["Hora"].dt.normalize()
+    daily = daily.groupby(["Origen_Id", "Fecha"], as_index=False)["Cantidad_viajes"].sum()
+    daily = daily.rename(columns={"Cantidad_viajes": "target"})
+    daily["day_of_week"] = daily["Fecha"].dt.day_of_week
+    daily["month"] = daily["Fecha"].dt.month
+    return daily
+
+
+def load_station_coordinates(stations_path: Path) -> pd.DataFrame:
+    # Leer el catálogo y conservar las estaciones con coordenadas.
+    stations = pd.read_csv(stations_path)
+    stations = stations[["id", "latitude", "longitude"]].rename(columns={"id": "Origen_Id"})
+    return stations.dropna(subset=["latitude", "longitude"])
+
+
+def integrate_daily_sources(daily_data, weather_data, weather_zones, poi_data):
+    # Unir clima por zona y fecha, y POI por estación, sin duplicar filas.
+    integrated = daily_data.copy()
+    integrated["Fecha"] = pd.to_datetime(integrated["Fecha"])
+    integrated = integrated.merge(
+        weather_zones, on="Origen_Id", how="left", validate="many_to_one"
+    )
+    integrated = integrated.merge(
+        weather_data[["time", "weather_zone"] + WEATHER_COLUMNS],
+        left_on=["Fecha", "weather_zone"],
+        right_on=["time", "weather_zone"],
+        how="left",
+        validate="many_to_one",
+    )
+    integrated = integrated.drop(columns=["time"])
+    return integrated.merge(poi_data, on="Origen_Id", how="left", validate="many_to_one")
+
+
+def prepare_model_data(force: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # Reutilizar el integrado solo si su contenido y sus entradas están verificados.
+    run_dir = find_latest_valid_run(VALIDATION_REPORTS_DIR, len(EXPECTED_MONTHS))
+    if run_dir is None:
+        raise FileNotFoundError(
+            "No hay una ejecución completa de la Fase 1 en reports/validation. "
+            "Ejecutar primero el procesamiento de la Fase 1 (MiBiciPipeline)."
+        )
+    run_checks = check_processed_run(run_dir, EXPECTED_MONTHS)
+    if not run_checks.all():
+        raise ValueError(f"La ejecución {run_dir.name} no pasa las validaciones:\n{run_checks}")
+    logger.info("Ejecución de la Fase 1 utilizada: %s", run_dir.name)
+
+    sources_ready = all(path.is_file() for path in (
+        WEATHER_PATH, STATION_ZONES_PATH, POI_PATH, STATIONS_PATH,
+    ))
+    signature = build_cache_signature(run_dir) if sources_ready else None
+    if INTEGRATED_PATH.is_file() and not force:
+        if signature is not None and cache_is_current(INTEGRATED_PATH, signature):
+            integrated = pd.read_parquet(INTEGRATED_PATH)
+            report = validate_contract(integrated, CONTRACT_DTYPES, POI_COLUMNS)
+            if report["passed"].all():
+                logger.info("Dataset integrado reutilizado: %s", INTEGRATED_PATH)
+                return integrated, report
+            logger.warning("El integrado no pasa las pruebas de calidad; se reconstruye.")
+        elif ALLOW_UNVERIFIED_CACHE:
+            integrated = pd.read_parquet(INTEGRATED_PATH)
+            report = validate_contract(integrated, CONTRACT_DTYPES, POI_COLUMNS)
+            if report["passed"].all():
+                logger.warning("Reutilizando Parquet sin procedencia verificada: %s", INTEGRATED_PATH)
+                return integrated, report
+        else:
+            logger.info("No hay manifiesto vigente; se reconstruye el integrado una vez.")
+
+    daily = build_daily_demand(pd.read_parquet(run_dir / "hourly_demand.parquet"))
+    PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    daily.to_parquet(DAILY_PATH, index=False)
+
+    stations = load_station_coordinates(STATIONS_PATH)
+    stations = stations[stations["Origen_Id"].isin(daily["Origen_Id"])]
+    weather, weather_zones = load_or_download_weather(stations)
+    poi_data = load_or_build_poi_counts(stations)
+    check_poi_counts(poi_data, set(daily["Origen_Id"]))
+
+    integrated = integrate_daily_sources(daily, weather, weather_zones, poi_data)
+    check_integration(daily, integrated)
+    report = validate_contract(integrated, CONTRACT_DTYPES, POI_COLUMNS)
+    if not report["passed"].all():
+        raise ValueError(f"El dataset integrado no pasa el contrato:\n{report}")
+    integrated.to_parquet(INTEGRATED_PATH, index=False)
+    save_cache_manifest(INTEGRATED_PATH, build_cache_signature(run_dir))
+    logger.info("Dataset integrado guardado: %s", INTEGRATED_PATH)
+    return integrated, report

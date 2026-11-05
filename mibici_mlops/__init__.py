@@ -1,1 +1,1 @@
-from mibici_mlops import config  # noqa: F401
+"""MiBici: pipeline reproducible de aprendizaje automático."""
