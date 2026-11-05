@@ -293,23 +293,7 @@ Las pruebas verifican componentes del procesamiento, las variables, la evaluaci�
 - **Trazabilidad:** Git, hashes y manifiestos permiten identificar las entradas y el código asociado a una ejecución.
 - **Pruebas:** `pytest` permite detectar cambios inesperados en el comportamiento.
 
-## 11. Recomendaciones para entregar o reproducir
-
-Antes de entregar, comprobar que:
-
-- [ ] Los módulos `.py`, `pyproject.toml`, `requirements.txt` y las pruebas estén en la rama entregada.
-- [ ] El README coincida con la estructura real de esa rama.
-- [ ] El enlace de Drive permita descargar los archivos necesarios.
-- [ ] Las rutas de la sección 3 coincidan con las que utiliza `config.py`.
-- [ ] Se haya documentado el comando confirmado de ejecución de Fase 1.
-- [ ] `python -m mibici_mlops.main` termine correctamente en el entorno de entrega.
-- [ ] `python -m pytest tests/` finalice sin fallos.
-- [ ] Se conserve el commit de la ejecución definitiva y se compruebe `git_dirty`.
-- [ ] La versión y el alias del modelo se verifiquen en MLflow Registry.
-- [ ] El informe explique la selección de Random Forest frente a HistGradientBoosting.
-- [ ] El PDF y el video incluyan evidencia del pipeline, las métricas, el Registry y los commits del equipo.
-
-## 12. Referencias
+## 11. Referencias
 
 - [MiBici](https://www.mibici.net/)
 - [Cookiecutter Data Science](https://cookiecutter-data-science.drivendata.org/)
