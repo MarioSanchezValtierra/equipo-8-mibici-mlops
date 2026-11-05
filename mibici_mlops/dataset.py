@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -9,8 +10,10 @@ import pyarrow.parquet as pq
 
 from mibici_mlops.config import (
     ALLOW_UNVERIFIED_CACHE,
+    CHUNK_SIZE,
     CONTRACT_DTYPES,
     DAILY_PATH,
+    DATA_DIR,
     DATA_END,
     DATA_START,
     EXPECTED_MONTHS,
@@ -20,6 +23,7 @@ from mibici_mlops.config import (
     POI_PATH,
     POI_RADIUS_METERS,
     PROCESSED_DATA_DIR,
+    SAVE_TRIPS,
     STATIONS_PATH,
     STATION_ZONES_PATH,
     VALIDATION_REPORTS_DIR,
@@ -29,6 +33,8 @@ from mibici_mlops.config import (
 )
 from mibici_mlops.checks import check_integration, check_poi_counts, validate_contract
 from mibici_mlops.external import load_or_build_poi_counts, load_or_download_weather
+from mibici_mlops.ingestion import discover_monthly_files
+from mibici_mlops.pipeline import MiBiciPipeline
 from mibici_mlops.tracking import calculate_sha256
 
 logger = logging.getLogger("mibici_mlops")
@@ -162,13 +168,33 @@ def integrate_daily_sources(daily_data, weather_data, weather_zones, poi_data):
 
 
 def prepare_model_data(force: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
-    # Reutilizar el integrado solo si su contenido y sus entradas están verificados.
+    # Reutilizar una ejecución válida o procesar los CSV si no existe ninguna.
     run_dir = find_latest_valid_run(VALIDATION_REPORTS_DIR, len(EXPECTED_MONTHS))
+
     if run_dir is None:
-        raise FileNotFoundError(
-            "No hay una ejecución completa de la Fase 1 en reports/validation. "
-            "Ejecutar primero el procesamiento de la Fase 1 (MiBiciPipeline)."
+        logger.info("No existe una ejecución válida de la Fase 1. Procesando CSV.")
+
+        raw_dir = DATA_DIR / "raw"
+        files = discover_monthly_files(raw_dir)
+
+        if len(files) != len(EXPECTED_MONTHS):
+            raise ValueError(
+                f"Se esperaban {len(EXPECTED_MONTHS)} CSV y se encontraron {len(files)}."
+            )
+
+        run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+        report_dir = VALIDATION_REPORTS_DIR / f"mibici_{run_id}"
+
+        pipeline = MiBiciPipeline(CHUNK_SIZE, SAVE_TRIPS)
+        pipeline.process_dataset(
+            files,
+            report_dir,
+            True,
+            "MiBici optimizado",
         )
+
+        run_dir = report_dir
+
     run_checks = check_processed_run(run_dir, EXPECTED_MONTHS)
     if not run_checks.all():
         raise ValueError(f"La ejecución {run_dir.name} no pasa las validaciones:\n{run_checks}")
@@ -178,6 +204,7 @@ def prepare_model_data(force: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]
         WEATHER_PATH, STATION_ZONES_PATH, POI_PATH, STATIONS_PATH,
     ))
     signature = build_cache_signature(run_dir) if sources_ready else None
+
     if INTEGRATED_PATH.is_file() and not force:
         if signature is not None and cache_is_current(INTEGRATED_PATH, signature):
             integrated = pd.read_parquet(INTEGRATED_PATH)
@@ -208,9 +235,12 @@ def prepare_model_data(force: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]
     integrated = integrate_daily_sources(daily, weather, weather_zones, poi_data)
     check_integration(daily, integrated)
     report = validate_contract(integrated, CONTRACT_DTYPES, POI_COLUMNS)
+
     if not report["passed"].all():
         raise ValueError(f"El dataset integrado no pasa el contrato:\n{report}")
+
     integrated.to_parquet(INTEGRATED_PATH, index=False)
     save_cache_manifest(INTEGRATED_PATH, build_cache_signature(run_dir))
     logger.info("Dataset integrado guardado: %s", INTEGRATED_PATH)
+
     return integrated, report
