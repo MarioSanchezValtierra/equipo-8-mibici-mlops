@@ -1,49 +1,57 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
+requires = ["flit_core>=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
 name = "mibici_mlops"
 version = "0.0.1"
-description = "Proyecto MLOps para predecir los flujos de entrada y salida de las estaciones de MiBici con tres días de anticipación, identificar posibles desequilibrios y apoyar la planeación operativa de la redistribución de bicicletas."
+description = "Proyecto MLOps para predecir las salidas diarias por estación de MiBici con un día de anticipación."
 authors = [
-  { name = "Equipo 8" },
+    { name = "Equipo 8" },
 ]
-
 readme = "README.md"
+requires-python = ">=3.13,<3.14"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
 ]
-
 dependencies = [
-    "ipython",
-    "jupyterlab",
+    "folium",
     "loguru",
     "matplotlib",
-    "mkdocs",
     "mlflow",
-    "notebook",
     "numpy",
+    "osmium",
     "pandas",
-    "pip",
     "pyarrow",
-    "pytest",
+    "pyproj",
     "python-dotenv",
-    "ruff",
+    "requests",
     "scikit-learn",
+    "shapely",
     "tqdm",
     "typer",
 ]
 
-requires-python = "~=3.13.0"
+[project.optional-dependencies]
+dev = [
+    "ipython",
+    "ipywidgets",
+    "jupyterlab",
+    "mkdocs",
+    "notebook",
+    "pytest",
+    "ruff",
+]
 
 [tool.ruff]
 line-length = 99
+target-version = "py313"
 src = ["mibici_mlops"]
 include = ["pyproject.toml", "mibici_mlops/**/*.py"]
 
 [tool.ruff.lint]
-extend-select = ["I"]  # Add import sorting
+extend-select = ["I"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["mibici_mlops"]
