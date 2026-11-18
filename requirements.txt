@@ -17,5 +17,10 @@ requests==2.34.2
 matplotlib==3.11.2
 pytest==9.1.1
 
+# plots.py usa IPython.display; seaborn e ipykernel para abrir los notebooks
+ipython==9.18.1
+seaborn==0.13.2
+ipykernel==7.4.0
+
 # Paquete del proyecto (dependencias en pyproject.toml)
 -e .

@@ -39,7 +39,7 @@ Más detalle en las secciones 10.4 a 10.6.
 ```bash
 git clone https://github.com/MarioSanchezValtierra/equipo-8-mibici-mlops.git
 cd equipo-8-mibici-mlops
-python3 -m venv .venv
+python3.13 -m venv .venv   # requiere Python 3.13, ver "Correr desde cero"
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
@@ -55,26 +55,58 @@ python -m pip install -r requirements.txt
 
 Pasos para alguien que clona el repositorio por primera vez. `mlflow.db`, `mlruns/`, `models/`, `reports/` y `data/` no están en GitHub: se generan al correr los pasos.
 
-**1. Entorno.**
+**1. Entorno.** Se requiere **Python 3.13** (`pyproject.toml` pide `>=3.13,<3.14`; es la misma versión de la imagen Docker y de `python_env.yaml`). Con otra versión, `pip install` falla con `requires a different Python`. Revisar con `python3.13 --version`; Ubuntu 24.04 trae 3.12, así que hay que instalarla con una de estas dos opciones:
+
+```bash
+# Opción A: uv (no necesita sudo)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv python install 3.13
+
+# Opción B: apt con el PPA deadsnakes
+sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt update
+sudo apt install python3.13 python3.13-venv
+```
+
+Después:
 
 ```bash
 git clone -b fase-final https://github.com/MarioSanchezValtierra/equipo-8-mibici-mlops.git
 cd equipo-8-mibici-mlops
-python3 -m venv .venv
+python3.13 -m venv .venv   # con uv: uv venv --python 3.13 .venv
 source .venv/bin/activate
+python --version           # debe decir 3.13.x
 make requirements          # pip install -r requirements.txt
 pytest -q                  # 79 pasan y 3 se saltan hasta que exista models/serving
 ```
 
+Si ya se había creado `.venv` con otra versión, borrarlo antes (`rm -rf .venv`).
+
+**Instalación en un solo comando (Ubuntu o WSL limpio).** Instala Python 3.13, crea el entorno, instala todas las librerías de `requirements.txt` y corre las pruebas. Se pega completo desde la raíz del repositorio:
+
+```bash
+sudo apt update && sudo apt install -y software-properties-common make git && sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt update && sudo apt install -y python3.13 python3.13-venv && rm -rf .venv && python3.13 -m venv .venv && source .venv/bin/activate && python -m pip install --upgrade pip && python -m pip install -r requirements.txt && python --version && pytest -q
+```
+
 **2. Datos.** Descargar de la [carpeta compartida en Google Drive](https://drive.google.com/drive/folders/1n83lQ_nEH9u7KvKAYNRcnUhae5tjoAYB?usp=drive_link) y acomodar así (detalle en la sección 3):
 
-| Archivo o carpeta | Ruta en el repositorio |
+| En Drive (`MLOps/MiBici`) | Ruta en el repositorio |
 | --- | --- |
-| Carpetas `2020` a `2026` (81 CSV mensuales) | `data/raw/2020/` ... `data/raw/2026/` |
+| Carpetas `2020` a `2025` | `data/raw/2020/` ... `data/raw/2025/` |
+| Carpeta `2026`, solo `datos_abiertos_2026_01.csv` a `datos_abiertos_2026_09.csv` | `data/raw/2026/` |
+| `2026/datos_abiertos_2026_10.csv` (solo para el monitoreo) | `data/monitoring/2026/datos_abiertos_2026_10.csv` (también se acepta `data/monitoring/datos_abiertos_2026_10.csv`) |
 | Carpeta `Manual_datos` | `data/raw/Manual_datos/` |
 | `weather_daily_zones_2020_2026.csv` y `mibici_station_weather_zones.csv` | `data/raw/weather/` |
 | `mibici_station_pois.csv` | `data/raw/pois/` |
-| CSV de viajes de octubre de 2026 (solo para el monitoreo) | `data/monitoring/2026/datos_abiertos_2026_10.csv` |
+| `mexico-latest.osm.pbf` (618 MB, opcional: el pipeline usa `mibici_station_pois.csv`; si el pbf existe solo se registra su versión) | `data/raw/pois/` |
+| `metadato_limites_municipales_jalisco_iieg.xlsx` (opcional, referencia) | `data/raw/` |
+
+En total quedan 81 CSV mensuales en `data/raw/` (enero de 2020 a septiembre de 2026). **El CSV de octubre de 2026 no va en `data/raw/2026/`**: si se deja ahí, `make data` se detiene con `Inventario incorrecto ... adicionales: [Period('2026-10', 'M')]`. Si se descargó la carpeta 2026 completa:
+
+```bash
+mkdir -p data/monitoring/2026
+mv data/raw/2026/datos_abiertos_2026_10.csv data/monitoring/2026/
+```
 
 **3. Correr en este orden.**
 
@@ -203,14 +235,15 @@ Los archivos grandes se mantienen fuera de GitHub. Se obtienen de la [carpeta co
 | En Google Drive | Guardar en el repositorio | Uso |
 | --- | --- | --- |
 | Carpetas `2020`, `2021`, `2022`, `2023`, `2024`, `2025`, `2026` | `data/raw/2020/` ... `data/raw/2026/` | CSV mensuales de viajes (81 en total para el periodo del proyecto) |
+| `2026/datos_abiertos_2026_10.csv` | `data/monitoring/2026/datos_abiertos_2026_10.csv` (no en `data/raw/2026/`) | Viajes de octubre de 2026 para el monitoreo de drift (`make monitor`) |
 | Carpeta `Manual_datos`, incluido `nomenclatura_2026_09.csv` | `data/raw/Manual_datos/` | Catálogo e identificadores de estaciones |
 | `weather_daily_zones_2020_2026.csv` | `data/raw/weather/weather_daily_zones_2020_2026.csv` | Información meteorológica por zona |
 | `mibici_station_weather_zones.csv` | `data/raw/weather/mibici_station_weather_zones.csv` | Relación entre estaciones y zonas meteorológicas |
 | `mibici_station_pois.csv` | `data/raw/pois/mibici_station_pois.csv` | Puntos de interés cercanos a estaciones |
 | `mexico-latest.osm.pbf` | `data/raw/pois/mexico-latest.osm.pbf` | Fuente OpenStreetMap para POI; archivo grande, aproximadamente 618 MB |
-| `metadato_limites_municipales_jalisco_iieg.xlsx` | `data/raw/metadato_limites_municipales_jalisco_iieg.xlsx` | Material geográfico de referencia; no se ha confirmado como entrada obligatoria del entrenamiento |
+| `metadato_limites_municipales_jalisco_iieg.xlsx` | `data/raw/metadato_limites_municipales_jalisco_iieg.xlsx` | Material geográfico de referencia; el código no lo lee, es opcional |
 
-**Importante:** no cambiar los nombres de los CSV originales ni colocarlos todos directamente en `data/raw/`. Mantener la estructura por año. La captura de Drive muestra los nombres anteriores, pero no permite comprobar el contenido de cada carpeta anual: verificar que estén los 81 archivos mensuales esperados.
+**Importante:** no cambiar los nombres de los CSV originales ni colocarlos todos directamente en `data/raw/`. Mantener la estructura por año y verificar que en `data/raw/` estén los 81 archivos mensuales, de enero de 2020 a septiembre de 2026. El de octubre de 2026 va en `data/monitoring/2026/`.
 
 Si se descarga una carpeta como ZIP, descomprimirla antes de ejecutar. Evitar una carpeta adicional como `data/raw/MiBici/2020/` si el código espera `data/raw/2020/`.
 
@@ -234,7 +267,7 @@ cd equipo-8-mibici-mlops
 ### 4.2. Crear y activar el entorno virtual
 
 ```bash
-python3 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -523,7 +556,7 @@ La ejecución "Entrega final | Random Forest | resumen de las tres fases" del ex
 
 Para ver las etiquetas como columnas: en la vista de ejecuciones, Columns, sección Tags. Para filtrar, por ejemplo: `tags.alert_A3 = "crítica"` o `tags.model_role = "champion"`.
 
-`make monitor` espera el CSV de octubre en `data/monitoring/2026/datos_abiertos_2026_10.csv`. Guarda las tablas y los reportes de Evidently en `reports/drift/` y registra el resultado en el experimento `MiBici_Fase3_Monitoreo_Drift` de MLflow.
+`make monitor` busca el CSV de octubre en `data/monitoring/2026/datos_abiertos_2026_10.csv` y, si no está ahí, en `data/monitoring/datos_abiertos_2026_10.csv`. Guarda las tablas y los reportes de Evidently en `reports/drift/` y registra el resultado en el experimento `MiBici_Fase3_Monitoreo_Drift` de MLflow.
 
 Las alertas tienen dos niveles, advertencia y crítica:
 

@@ -40,7 +40,19 @@ from mibici_mlops.modeling.evaluate import predict_seasonal_naive, regression_me
 MONITOR_START = pd.Timestamp("2026-10-01")
 MONITOR_END = pd.Timestamp("2026-11-01")
 DROP_START = pd.Timestamp("2026-10-16")
-MONITOR_CSV = MONITORING_DATA_DIR / "2026" / "datos_abiertos_2026_10.csv"
+MONITOR_CSV_NAME = "datos_abiertos_2026_10.csv"
+
+
+def resolve_monitor_csv(base_dir=MONITORING_DATA_DIR, name=MONITOR_CSV_NAME):
+    """Ruta del CSV de octubre: data/monitoring/2026/ y, si no está ahí, data/monitoring/."""
+    preferred = base_dir / "2026" / name
+    if preferred.is_file():
+        return preferred
+    flat = base_dir / name
+    return flat if flat.is_file() else preferred
+
+
+MONITOR_CSV = resolve_monitor_csv()
 
 # Pruebas estadísticas por variable
 KS_THRESHOLD = 0.1
