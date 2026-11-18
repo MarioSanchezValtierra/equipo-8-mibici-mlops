@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import pytest
 
@@ -26,7 +28,10 @@ def test_csv_versioning_keeps_history(tmp_path):
     assert len(first) == 1
     assert first.iloc[0]["version"] == 1
     assert version_csv_sources(source, versions).iloc[0]["known_versions"] == 1
+    first_mtime = csv_path.stat().st_mtime_ns
     csv_path.write_text("value\n2\n", encoding="utf-8")
+    # Mismo tamaño y, en algunos sistemas de archivos, misma marca de tiempo; se adelanta un segundo
+    os.utime(csv_path, ns=(first_mtime + 1_000_000_000, first_mtime + 1_000_000_000))
     second = version_csv_sources(source, versions)
     assert second.iloc[0]["version"] == 2
     assert second.iloc[0]["known_versions"] == 2

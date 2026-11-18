@@ -1,0 +1,6 @@
+# Solo entra a la imagen lo que usa el Dockerfile; datos, MLflow y notebooks se quedan fuera
+*
+!requirements-serving.txt
+!mibici_mlops/serving/app.py
+!models/serving/
+**/__pycache__

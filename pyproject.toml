@@ -16,7 +16,11 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "cloudpickle",
+    "evidently",
+    "fastapi",
     "folium",
+    "joblib",
     "loguru",
     "matplotlib",
     "mlflow",
@@ -24,17 +28,21 @@ dependencies = [
     "osmium",
     "pandas",
     "pyarrow",
+    "pydantic",
     "pyproj",
     "python-dotenv",
     "requests",
     "scikit-learn",
+    "scipy",
     "shapely",
     "tqdm",
     "typer",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "httpx",
     "ipython",
     "ipywidgets",
     "jupyterlab",
@@ -56,3 +64,7 @@ extend-select = ["I"]
 [tool.ruff.lint.isort]
 known-first-party = ["mibici_mlops"]
 force-sort-within-sections = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: prueba de extremo a extremo"]

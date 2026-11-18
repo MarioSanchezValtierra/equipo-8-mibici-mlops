@@ -279,3 +279,28 @@ REFERENCE_RESULTS = {
     "Ingenuo estacional, prueba 2026 (todas)": 7.957,
     "Modelo final, prueba 2026 (nuevas)": 3.511,
 }
+
+# Entrega final: modelo de referencia, servicio, monitoreo y despliegue
+PHASE2_MODEL_VERSION = 7  # versión de la fase 2; la que guarda FINAL_MODEL_PATH
+SERVING_DIR = MODELS_DIR / "serving"
+SERVING_MODEL_DIR = SERVING_DIR / "model"
+REPRODUCIBILITY_DIR = PROJECT_ROOT / "reports" / "reproducibility"
+MONITORING_DATA_DIR = DATA_DIR / "monitoring"
+DRIFT_REPORTS_DIR = PROJECT_ROOT / "reports" / "drift"
+CHAMPION_REPORTS_DIR = PROJECT_ROOT / "reports" / "champion"
+# Experimentos de la entrega final, con artefactos en mlruns/ como MiBici_Fase2_Modelado.
+# MiBici_Monitoreo_Drift y MiBici_Champion_Challenger quedan con las corridas del notebook 07.
+MONITORING_EXPERIMENT = "MiBici_Fase3_Monitoreo_Drift"
+CHALLENGER_EXPERIMENT = "MiBici_Fase3_Champion_Challenger"
+
+# Docker: etiqueta vigente de cada champion desplegado. 1.1.0 fue la v10 sin la página /ui;
+# 1.2.0 es la v10 con la página. Un champion nuevo recibe la siguiente (1.3.0).
+IMAGE_NAME = "ml-service:latest"
+DOCKERHUB_REPO = "josecval/mibici-ml-service"
+RELEASES = {"7": "1.0.0", "10": "1.2.0"}
+
+# Champion contra challenger: el challenger gana si baja el MAE al menos 2 % y no empeora el RMSE
+MIN_IMPROVEMENT = 0.02
+# Con False, los scripts solo muestran la decisión; con True, promueven y publican.
+AUTO_PROMOTE = False
+AUTO_DEPLOY = False
