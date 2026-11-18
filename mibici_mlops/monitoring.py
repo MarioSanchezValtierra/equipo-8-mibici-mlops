@@ -557,9 +557,26 @@ def log_monitoring(results: dict, model_uri: str, csv_name: str, output_dir: Pat
     return parent.info.run_id
 
 
+def resolve_phase2_version(model_version: int = PHASE2_MODEL_VERSION) -> int:
+    """Versión del modelo de la Fase 2 en el registro.
+
+    En la base del equipo es la 7. En una base nueva, creada al correr el proyecto desde cero,
+    la Fase 2 registra la versión 1; si la versión configurada no existe se usa la primera registrada.
+    """
+    client = mlflow.MlflowClient()
+    versions = sorted(int(v.version) for v in client.search_model_versions(f"name='{REGISTERED_MODEL_NAME}'"))
+    if not versions:
+        raise ValueError(f"No hay versiones de {REGISTERED_MODEL_NAME}; correr antes la Fase 2 (make train).")
+    if model_version in versions:
+        return model_version
+    print(f"La versión {model_version} no existe en este registro; se usa la versión {versions[0]} como modelo de la Fase 2.")
+    return versions[0]
+
+
 def load_context(model_version: int = PHASE2_MODEL_VERSION) -> dict:
     """Datos integrados, separación temporal y el modelo que estuvo en uso durante el mes."""
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    model_version = resolve_phase2_version(model_version)
     integrated = pd.read_parquet(INTEGRATED_PATH)
     dataset = build_model_dataset(integrated, HORIZON_DAYS, LAGS, ROLLING_WINDOWS, TARGET_COLUMN)
     development, test = split_by_date(dataset, TEST_START)

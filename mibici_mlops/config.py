@@ -1,5 +1,6 @@
 """Rutas, periodo de estudio, cortes de la separación, reglas de limpieza y esquemas."""
 
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -302,5 +303,6 @@ RELEASES = {"7": "1.0.0", "10": "1.2.0"}
 # Champion contra challenger: el challenger gana si baja el MAE al menos 2 % y no empeora el RMSE
 MIN_IMPROVEMENT = 0.02
 # Con False, los scripts solo muestran la decisión; con True, promueven y publican.
-AUTO_PROMOTE = False
+# En una corrida desde cero se activa sin editar el archivo: AUTO_PROMOTE=True make challenger
+AUTO_PROMOTE = os.getenv("AUTO_PROMOTE", "False") == "True"
 AUTO_DEPLOY = False

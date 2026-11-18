@@ -51,6 +51,52 @@ python -m pip install -r requirements.txt
 5. Monitoreo de octubre y comparación de modelos: `make monitor`, `make challenger`, `make champion` y `make mlflow-catalog` (sección 10.7).
 6. Servicio sin Docker: `make serve`; con Docker: `make docker-build` y `make docker-run` (sección 10).
 
+## Correr desde cero
+
+Pasos para alguien que clona el repositorio por primera vez. `mlflow.db`, `mlruns/`, `models/`, `reports/` y `data/` no están en GitHub: se generan al correr los pasos.
+
+**1. Entorno.**
+
+```bash
+git clone -b fase-final https://github.com/MarioSanchezValtierra/equipo-8-mibici-mlops.git
+cd equipo-8-mibici-mlops
+python3 -m venv .venv
+source .venv/bin/activate
+make requirements          # pip install -r requirements.txt
+pytest -q                  # 79 pasan y 3 se saltan hasta que exista models/serving
+```
+
+**2. Datos.** Descargar de la [carpeta compartida en Google Drive](https://drive.google.com/drive/folders/1n83lQ_nEH9u7KvKAYNRcnUhae5tjoAYB?usp=drive_link) y acomodar así (detalle en la sección 3):
+
+| Archivo o carpeta | Ruta en el repositorio |
+| --- | --- |
+| Carpetas `2020` a `2026` (81 CSV mensuales) | `data/raw/2020/` ... `data/raw/2026/` |
+| Carpeta `Manual_datos` | `data/raw/Manual_datos/` |
+| `weather_daily_zones_2020_2026.csv` y `mibici_station_weather_zones.csv` | `data/raw/weather/` |
+| `mibici_station_pois.csv` | `data/raw/pois/` |
+| CSV de viajes de octubre de 2026 (solo para el monitoreo) | `data/monitoring/2026/datos_abiertos_2026_10.csv` |
+
+**3. Correr en este orden.**
+
+```bash
+make data                       # Fase 1: limpieza y data/processed/mibici_integrated.parquet
+make train                      # Fase 2: entrenamiento, prueba 2026 y registro en MLflow
+make monitor                    # monitoreo de octubre 2026, escenarios y alertas
+AUTO_PROMOTE=True make challenger   # challengers; registra el nuevo champion si gana
+make champion                   # documenta el champion en MLflow
+make export-model               # copia el champion a models/serving
+pytest -q                       # ahora corren las 82 pruebas
+make deploy                     # construye la imagen y compara local contra contenedor (no publica)
+make mlflow-catalog             # corrida resumen MiBici_Entrega_Final
+make docker-run                 # servicio en http://localhost:8000
+```
+
+`make train` también corre la Fase 1 si todavía no existe, así que `make data` es opcional. En una base de MLflow nueva las versiones empiezan en 1: el modelo de la Fase 2 queda como versión 1 (en la base del equipo es la 7) y el champion como versión 2 (en la base del equipo es la 10). `make monitor` detecta esto solo. Sin `AUTO_PROMOTE=True`, `make challenger` solo muestra la decisión y el servicio usa el modelo de la Fase 2.
+
+**4. Revisar.** `mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000` y abrir <http://127.0.0.1:5000>. El servicio queda en <http://localhost:8000/ui> y <http://localhost:8000/docs>.
+
+Para usar solo el modelo publicado no hace falta nada de lo anterior: `docker run -d -p 8000:8000 josecval/mibici-ml-service:1.2.0`.
+
 ## 1. Alcance y resultados
 
 - **Fase 1:** lectura de datos, validaciones, limpieza, generación de Parquet, particiones temporales, análisis exploratorio y registro de resultados.
@@ -242,7 +288,7 @@ Las rutas deben derivarse de la raíz del repositorio, sin depender de `/home/us
 7. Revisar los reportes, los resultados de prueba y los registros de MLflow.
 8. Ejecutar las pruebas automatizadas.
 
-**Punto a verificar:** el comando exacto para lanzar **solo la Fase 1** depende de cómo quedó integrado el punto de entrada de `MiBiciPipeline` en la rama final. No se documenta un comando no confirmado. Antes de publicar, agregar aquí ese comando verificado; `python -m mibici_mlops.main` corresponde al flujo de Fase 2 que se ejecutó.
+Para correr **solo la Fase 1**: `make data`. Para la Fase 2: `make train` (equivale a `python -m mibici_mlops.main` y corre la Fase 1 si no existe una ejecución válida). El orden completo está en "Correr desde cero".
 
 ### 6.2. Ejecutar la Fase 2
 

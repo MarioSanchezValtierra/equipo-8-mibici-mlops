@@ -14,7 +14,7 @@ PYTHON_INTERPRETER = python
 ## Install Python dependencies
 .PHONY: requirements
 requirements:
-	uv sync
+	$(PYTHON_INTERPRETER) -m pip install -r requirements.txt
 
 
 
@@ -62,10 +62,16 @@ create_environment:
 #################################################################################
 
 
-## Make dataset
+## Fase 1: procesar los CSV de data/raw y generar data/processed/mibici_integrated.parquet
 .PHONY: data
-data: requirements
-	$(PYTHON_INTERPRETER) mibici_mlops/dataset.py
+data:
+	$(PYTHON_INTERPRETER) -c "from mibici_mlops.dataset import prepare_model_data; prepare_model_data()"
+
+
+## Fase 2: variables, validación, entrenamiento, prueba y registro en MLflow (corre la Fase 1 si falta)
+.PHONY: train
+train:
+	$(PYTHON_INTERPRETER) -m mibici_mlops.main
 
 
 ## Export the champion model from MLflow to models/serving
