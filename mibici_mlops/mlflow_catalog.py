@@ -292,7 +292,9 @@ def log_final_summary(project_root: Path = PROJECT_ROOT, verification: pd.DataFr
     client = mlflow.MlflowClient()
 
     champion = client.get_model_version_by_alias(REGISTERED_MODEL_NAME, MODEL_ALIAS)
-    phase2 = client.get_model_version(REGISTERED_MODEL_NAME, str(PHASE2_MODEL_VERSION))
+    from mibici_mlops.monitoring import resolve_phase2_version
+
+    phase2 = client.get_model_version(REGISTERED_MODEL_NAME, str(resolve_phase2_version(PHASE2_MODEL_VERSION)))
     sources = {
         "fase_1_datos": current_run(client, MLFLOW_EXPERIMENT),
         "fase_2_modelo_final": client.get_run(phase2.run_id),
