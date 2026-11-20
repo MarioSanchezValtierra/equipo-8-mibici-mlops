@@ -14,8 +14,8 @@ PYTHON_INTERPRETER = python
 ## Install Python dependencies
 .PHONY: requirements
 requirements:
-	uv sync
-	
+	$(PYTHON_INTERPRETER) -m pip install -r requirements.txt
+
 
 
 
@@ -40,10 +40,10 @@ format:
 
 
 
-## Run tests
+## Run unit and integration tests
 .PHONY: test
 test:
-	python -m pytest tests
+	$(PYTHON_INTERPRETER) -m pytest -q
 
 
 ## Set up Python interpreter environment
@@ -53,7 +53,7 @@ create_environment:
 	@echo ">>> New uv virtual environment created. Activate with:"
 	@echo ">>> Windows: .\\\\.venv\\\\Scripts\\\\activate"
 	@echo ">>> Unix/macOS: source ./.venv/bin/activate"
-	
+
 
 
 
@@ -62,10 +62,70 @@ create_environment:
 #################################################################################
 
 
-## Make dataset
+## Fase 1: procesar los CSV de data/raw y generar data/processed/mibici_integrated.parquet
 .PHONY: data
-data: requirements
-	$(PYTHON_INTERPRETER) mibici_mlops/dataset.py
+data:
+	$(PYTHON_INTERPRETER) -c "from mibici_mlops.dataset import prepare_model_data; prepare_model_data()"
+
+
+## Fase 2: variables, validación, entrenamiento, prueba y registro en MLflow (corre la Fase 1 si falta)
+.PHONY: train
+train:
+	$(PYTHON_INTERPRETER) -m mibici_mlops.main
+
+
+## Export the champion model from MLflow to models/serving
+.PHONY: export-model
+export-model:
+	$(PYTHON_INTERPRETER) -m mibici_mlops.modeling.export_model
+
+
+## Serve the API locally on http://localhost:8000/docs
+.PHONY: serve
+serve:
+	MODEL_URI=models/serving/model uvicorn mibici_mlops.serving.app:app --host 0.0.0.0 --port 8000
+
+
+## Build the Docker image
+.PHONY: docker-build
+docker-build:
+	docker build -t ml-service:latest .
+
+
+## Run the Docker image on port 8000
+.PHONY: docker-run
+docker-run:
+	docker run -p 8000:8000 ml-service:latest
+
+
+## Build, check against the reference sample and publish if AUTO_DEPLOY is True
+.PHONY: deploy
+deploy:
+	$(PYTHON_INTERPRETER) -m mibici_mlops.modeling.deploy
+
+
+## Monitor October 2026: drift, scenarios, alerts and action
+.PHONY: monitor
+monitor:
+	$(PYTHON_INTERPRETER) -m mibici_mlops.monitoring
+
+
+## Champion vs challenger with the promotion rule
+.PHONY: challenger
+challenger:
+	$(PYTHON_INTERPRETER) -m mibici_mlops.modeling.challenger
+
+
+## Log the champion evidence (metrics, figures, configuration) to MLflow
+.PHONY: champion
+champion:
+	$(PYTHON_INTERPRETER) -m mibici_mlops.modeling.champion_report
+
+
+## Final summary run and descriptions and tags for every MLflow experiment
+.PHONY: mlflow-catalog
+mlflow-catalog:
+	$(PYTHON_INTERPRETER) -m mibici_mlops.mlflow_catalog
 
 
 #################################################################################
