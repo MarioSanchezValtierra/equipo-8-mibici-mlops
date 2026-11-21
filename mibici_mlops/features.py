@@ -50,3 +50,18 @@ def split_by_date(data: pd.DataFrame, test_start: pd.Timestamp):
     development = data.loc[data["Fecha"] < test_start].reset_index(drop=True)
     test = data.loc[data["Fecha"] >= test_start].reset_index(drop=True)
     return development, test
+
+
+# Días oficiales de descanso (Ley Federal del Trabajo, art. 74), la lista del notebook 05.
+HOLIDAY_DATES = [101, 501, 916, 1225]   # mes * 100 + día
+HOLIDAY_MONDAYS = [21, 33, 113]         # mes * 10 + número de lunes: 1.º de febrero, 3.º de marzo y de noviembre
+
+
+def add_holidays(features: pd.DataFrame) -> pd.DataFrame:
+    # Se calcula con month, day_of_month y day_of_week, así la API recibe las mismas 18 variables.
+    features = features.copy()
+    date_key = features["month"] * 100 + features["day_of_month"]
+    monday_key = features["month"] * 10 + (features["day_of_month"] - 1) // 7 + 1
+    holiday = date_key.isin(HOLIDAY_DATES) | ((features["day_of_week"] == 0) & monday_key.isin(HOLIDAY_MONDAYS))
+    features["is_holiday"] = holiday.astype(int)
+    return features
